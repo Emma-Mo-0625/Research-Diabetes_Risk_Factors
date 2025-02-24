@@ -1,0 +1,285 @@
+---
+title: "203 Final Project"
+output: pdf_document
+date: "2024-11-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(pROC)
+
+diabetes_data <- read.csv("diabetes_binary_5050split_health_indicators_BRFSS2015.csv", stringsAsFactors = FALSE)
+```
+1. Data Preparation
+```{r}
+str(diabetes_data)
+dim(diabetes_data)
+
+```
+
+2. Descriptive Statistics
+
+```{r}
+# Select only the key variables to summarize
+key_variables <- diabetes_data %>% select(MentHlth, PhysHlth, Smoker, PhysActivity, Diabetes_binary)
+
+# Function to check for outliers using IQR and count missing values
+summary_stats <- apply(key_variables, 2, function(x) {
+  q1 <- quantile(x, 0.25, na.rm = TRUE)  # First quartile
+  q3 <- quantile(x, 0.75, na.rm = TRUE)  # Third quartile
+  iqr <- q3 - q1  # Interquartile range
+  lower_bound <- q1 - 1.5 * iqr
+  upper_bound <- q3 + 1.5 * iqr
+  outliers <- sum(x < lower_bound | x > upper_bound, na.rm = TRUE)  # Count of outliers
+  
+  c(
+    n = sum(!is.na(x)),  # Number of observations
+    mean = mean(x, na.rm = TRUE),
+    sd = sd(x, na.rm = TRUE),
+    median = median(x, na.rm = TRUE),
+    min = min(x, na.rm = TRUE),
+    max = max(x, na.rm = TRUE),
+    missing = sum(is.na(x)),  # Count of missing values
+    outliers = outliers  # Count of outliers
+  )
+})
+
+# Transpose for readability and convert to data frame
+summary_stats <- as.data.frame(t(summary_stats))
+
+# Add descriptive column names
+colnames(summary_stats) <- c("n", "Mean", "SD", "Median", "Min", "Max", "Missing", "Outliers")
+
+# Print the summary statistics in a table format
+knitr::kable(summary_stats, caption = "Table 1: Summary Statistics of Key Variables")
+
+```
+
+
+3. Hypothesis Testing
+Continuous Variables (t-tests)
+```{r}
+# Compare MentHlth and PhysHlth between diabetic and non-diabetic individuals
+
+# If the average number of poor mental health differs significantly between those with and without diabetes
+t_test_menthlth <- t.test(MentHlth ~ Diabetes_binary, data = diabetes_data)
+t_test_menthlth
+
+# if the average number of poor physical health differs significantly between those with and without diabetes
+t_test_physhlth <- t.test(PhysHlth ~ Diabetes_binary, data = diabetes_data)
+t_test_physhlth
+
+```
+The p-values are extremely small.
+
+There is a statistically significant difference in mental health between individuals with and without diabetes. On average, individuals with diabetes report more poor mental health days.
+
+There is a statistically significant difference in physical health between individuals with and without diabetes. On average, individuals with diabetes report significantly more poor physical health days.
+
+```{r}
+# Summary: means for Mental Health and Physical Health by Diabetes status
+summary_stats <- diabetes_data %>%
+  group_by(Diabetes_binary) %>%
+  summarise(
+    mean_menthlth = mean(MentHlth, na.rm = TRUE),
+    mean_physhlth = mean(PhysHlth, na.rm = TRUE)
+  )
+summary_stats
+```
+
+Categorical Variables (Chi-square Tests)
+```{r}
+# Test association between lifestyle (smoking and physical activity) and diabetes
+chisq_smoker <- chisq.test(table(diabetes_data$Smoker, diabetes_data$Diabetes_binary))
+chisq_smoker
+
+chisq_physactivity <- chisq.test(table(diabetes_data$PhysActivity, diabetes_data$Diabetes_binary))
+chisq_physactivity
+```
+The p-values are extremely small.
+Both lifestyle factors (smoking and physical activity) are significantly associated with diabetes status.
+
+
+Summary of all categorical variables (Smoker, PhysActivity, Diabetes_binary)
+```{r}
+summarize_categorical <- function(data, var) {
+  data %>%
+    group_by(!!sym(var)) %>%
+    summarise(
+      N = n(),
+      Percentage = round((N / nrow(data)) * 100, 2)
+    )
+}
+
+# Summarize for each categorical variable
+summary_smoker <- summarize_categorical(diabetes_data, "Smoker")
+summary_physactivity <- summarize_categorical(diabetes_data, "PhysActivity")
+summary_diabetes <- summarize_categorical(diabetes_data, "Diabetes_binary")
+
+summary_smoker
+summary_physactivity
+summary_diabetes
+```
+The percentage of Diabetes vs Non-diabetes in the dataset is 50% vs 50%
+
+```{r}
+# Simplify dataset by taking the mean of continuous variables
+simplified_data <- diabetes_data %>%
+  group_by(Diabetes_binary) %>%
+  summarise(
+    mean_menthlth = mean(MentHlth, na.rm = TRUE),
+    mean_physhlth = mean(PhysHlth, na.rm = TRUE),
+    Smoker = mean(Smoker, na.rm = TRUE),
+    PhysActivity = mean(PhysActivity, na.rm = TRUE)
+  )
+
+# Use knitr::kable to display the summarized data as a table
+knitr::kable(
+  simplified_data,
+  caption = "Table 2: Simplified Summary Data Grouped by Diabetes Status"
+)
+
+```
+
+
+```{r}
+# Correlation between MentHlth and PhysHlth
+correlation <- cor.test(diabetes_data$MentHlth, diabetes_data$PhysHlth)
+correlation
+```
+There is a statistically significant (small p-value), moderate positive correlation (correlation coefficient > 0) between poor mental health and poor physical health.
+
+
+```{r}
+# Split dataset into training (50%) and testing (50%)
+set.seed(42)  # For reproducibility
+train_indices <- sample(1:nrow(diabetes_data), nrow(diabetes_data) / 2)
+train_data <- diabetes_data[train_indices, ]
+test_data <- diabetes_data[-train_indices, ]
+
+# Fit logistic regression on training data
+logistic_model <- glm(Diabetes_binary ~ MentHlth + PhysHlth + Smoker + PhysActivity,
+                      data = train_data, family = binomial)
+summary(logistic_model)
+```
+
+```{r}
+model_summary <- summary(logistic_model)
+
+# Extract coefficients
+coefficients <- as.data.frame(model_summary$coefficients)
+
+# Rename columns for clarity
+colnames(coefficients) <- c("Estimate", "Std. Error", "z-value", "p-value")
+
+# Print table using knitr::kable
+knitr::kable(
+  coefficients,
+  caption = "Table 3: Logistic Regression Results"
+)
+```
+
+For mental health, the estimate is pretty small, meaning that the log-odds of diabetes decrease very slightly for each additional day of poor mental health. And the p-value = 0.7875, which is not significant. This shows that mental health does not significantly contribute to predicting diabetes when adjusted for other factors.
+
+For physical health, the estimate is 0.04, meaning that each additional day of poor physical health increases the log-odds of diabetes by 0.04. The Odds Ratio is 1.041, which means each additional day of poor physical health increases the odds of diabetes by ~4.1%. P-value is extremely small, showing the relationship is statistically significant.
+
+For smoking, being a smoker increases the log-odds of diabetes by 0.219 (Odds Ratio: 1.244), meaning that smokers have 24.4% higher odds of having diabetes compared to non-smokers. The small P-value shows that smoking is strongly associated with diabetes.
+
+For physical activity, being physically active decreases the log-odds of diabetes by 0.524 (Odds Ratio: 0.592), representing that physically active individuals have 59.2% lower odds of having diabetes. The extremely small P-value shows that physical activity is a significantly strong predictive factor of diabetes.
+
+```{r}
+# Predict on the test set
+test_data$predicted_prob <- predict(logistic_model, newdata = test_data, type = "response")
+test_data$predicted_class <- ifelse(test_data$predicted_prob > 0.5, 1, 0)
+
+```
+
+```{r}
+# Confusion matrix
+confusion_matrix <- table(test_data$Diabetes_binary, test_data$predicted_class)
+confusion_matrix
+```
+
+```{r}
+# Accuracy
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+accuracy
+```
+A moderate level of accuracy.
+The dataset is balanced (50% diabetic, 50% non-diabetic), so random guessing would yield an accuracy of around 50%. The model's accuracy of 60.6% is better than that, indicating some predictive power.
+
+```{r}
+# Sensitivity (Recall): ability correctly identify people with a disease (true positives).
+
+sensitivity <- confusion_matrix[2, 2] / sum(confusion_matrix[2, ])
+sensitivity
+```
+The model correctly identifies 51.5% of individuals with diabetes but misses nearly half of them.
+To Improve Sensitivity:
+1) Adjust the classification threshold (default is 0.5) to favor capturing more positive cases.
+2) Add more features or interactions to better capture the variability in diabetic cases.
+
+
+```{r}
+# Specificity: ability to correctly identify people without a disease (true negatives)
+specificity <- confusion_matrix[1, 1] / sum(confusion_matrix[1, ])
+specificity
+```
+The model correctly identifies ~70% of non-diabetic individuals but misclassifies ~30% of them as diabetic. 
+The model performs better in identifying non-diabetic cases (higher specificity)
+
+```{r}
+library(ggplot2)
+
+# Define the confusion matrix
+confusion_matrix <- matrix(c(12335, 5388, 8540, 9083), nrow = 2, byrow = TRUE)
+rownames(confusion_matrix) <- c("Non-Diabetic", "Diabetic")  # True labels
+colnames(confusion_matrix) <- c("Non-Diabetic", "Diabetic")  # Predicted labels
+
+# Convert confusion matrix to data frame for ggplot
+confusion_df <- as.data.frame(as.table(confusion_matrix))
+colnames(confusion_df) <- c("True_Label", "Predicted_Label", "Count")
+
+# Plot heatmap
+ggplot(confusion_df, aes(x = Predicted_Label, y = True_Label, fill = Count)) +
+  geom_tile(color = "white") +  # Create heatmap tiles
+  geom_text(aes(label = Count), color = "black", size = 6) +  # Add text labels for counts
+  scale_fill_gradient(low = "lightblue", high = "blue") +  # Color gradient
+  labs(
+    title = "Figure 1: Confusion Matrix Heatmap",
+    x = "Predicted Label",
+    y = "True Label"
+  ) +
+  theme_minimal() +  # Minimal theme
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.text = element_text(size = 12),
+    axis.title = element_text(size = 14)
+  )
+
+
+```
+
+
+6. Metrics (AUC and Confidence Intervals)
+```{r}
+# Evaluate model performance using AUC
+library(pROC)
+roc_curve <- roc(test_data$Diabetes_binary, test_data$predicted_prob)
+auc_value <- auc(roc_curve)
+
+auc_value
+
+# Plot the ROC curve
+plot(roc_curve, main = "Figure 2: ROC Curve for Test Data")
+
+```
+The AUC of 0.6468 indicates the model has fair predictive power for identifying diabetes.
+
+
+
