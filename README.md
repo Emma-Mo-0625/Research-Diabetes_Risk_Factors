@@ -4,7 +4,7 @@
 
 ## 🏥 UCLA Biostat 203A - Master in Data Science in Health
 
-### 👩‍🔬 **Author**: Emma Mo  
+### 👩‍🔬 **Author**: Rongrong (Emma) Mo  
 ### 🎓 **Institution**: UCLA Fielding School of Public Health  
 ### 📅 **Semester**: Fall 2024  
 
